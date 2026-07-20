@@ -73,6 +73,11 @@ defmodule SSHAudio.OutputSink.Server do
   end
 
   @impl true
+  def seek(state, position) do
+    send_command(state, ~s({"command":["set_property","time-pos",#{position}]}\n))
+  end
+
+  @impl true
   def info(%{socket_path: nil} = state), do: {:error, state}
 
   def info(state) do
@@ -94,6 +99,7 @@ defmodule SSHAudio.OutputSink.Server do
           genre: meta_lookup(metadata, "genre"),
           bitrate: bitrate,
           samplerate: if(is_map(audio_params), do: audio_params["samplerate"]),
+          bitdepth: audio_bitdepth(audio_params),
           position: position,
           duration: duration
         }
@@ -101,6 +107,19 @@ defmodule SSHAudio.OutputSink.Server do
         {:ok, info, %{state | ipc: sock}}
     end
   end
+
+  defp audio_bitdepth(%{"format" => format}) do
+    case format do
+      "u8" -> 8
+      "s16" -> 16
+      "s24" -> 24
+      "s32" -> 32
+      "float" -> 32
+      _ -> nil
+    end
+  end
+
+  defp audio_bitdepth(_), do: nil
 
   defp meta_lookup(metadata, key) when is_map(metadata) do
     case Enum.find(metadata, fn {k, _v} -> String.downcase(k) == key end) do

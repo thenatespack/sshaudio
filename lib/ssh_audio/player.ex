@@ -45,6 +45,7 @@ defmodule SSHAudio.Player do
   def skip(user_id), do: GenServer.cast(via(user_id), :skip)
   def enqueue(user_id, track), do: GenServer.cast(via(user_id), {:enqueue, track})
   def set_volume(user_id, volume), do: GenServer.cast(via(user_id), {:set_volume, volume})
+  def seek(user_id, position), do: GenServer.cast(via(user_id), {:seek, position})
 
   # Server callbacks
 
@@ -112,6 +113,16 @@ defmodule SSHAudio.Player do
     volume = clamp(volume)
     {:ok, sink_state} = state.sink_mod.set_volume(state.sink_state, volume)
     {:noreply, broadcast(%{state | sink_state: sink_state, volume: volume})}
+  end
+
+  def handle_cast({:seek, _position}, %{current: nil} = state), do: {:noreply, state}
+
+  def handle_cast({:seek, position}, state) do
+    {:ok, sink_state} = state.sink_mod.seek(state.sink_state, position)
+    # Reflects the jump immediately rather than waiting on the next tick's
+    # `info/1` poll, since that can be up to a second away.
+    now_info = state.now_info && %{state.now_info | position: position}
+    {:noreply, broadcast(%{state | sink_state: sink_state, now_info: now_info})}
   end
 
   @impl true

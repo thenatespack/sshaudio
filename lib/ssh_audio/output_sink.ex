@@ -24,7 +24,8 @@ defmodule SSHAudio.OutputSink do
           artist: String.t() | nil,
           genre: String.t() | nil,
           bitrate: number() | nil,
-          samplerate: number() | nil,
+          samplerate: string() | nil,
+          bitdepth: number() | nil,
           position: number() | nil,
           duration: number() | nil
         }
@@ -35,6 +36,7 @@ defmodule SSHAudio.OutputSink do
   @callback resume(state()) :: {:ok, state()}
   @callback stop(state()) :: {:ok, state()}
   @callback set_volume(state(), 0..100) :: {:ok, state()}
+  @callback seek(state(), position :: number()) :: {:ok, state()}
   @callback handle_message(state(), term()) :: :ignore | {:done, state()}
 
   @doc """
