@@ -24,7 +24,7 @@ defmodule SSHAudio.OutputSink do
           artist: String.t() | nil,
           genre: String.t() | nil,
           bitrate: number() | nil,
-          samplerate: string() | nil,
+          samplerate: number() | nil,
           bitdepth: number() | nil,
           position: number() | nil,
           duration: number() | nil

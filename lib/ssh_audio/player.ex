@@ -62,18 +62,28 @@ defmodule SSHAudio.Player do
   @impl true
   def handle_cast({:play, track}, state) do
     {:ok, sink_state} = state.sink_mod.play(state.sink_state, track, state.volume)
-    state = %{state | sink_state: sink_state, current: track, status: :playing, now_info: nil}
+
+    state = %{
+      state
+      | sink_state: sink_state,
+        current: track,
+        status: :playing,
+        now_info: nil,
+        ticking: false
+    }
+
     {:noreply, broadcast(maybe_schedule_tick(state))}
   end
 
   def handle_cast(:toggle, %{status: :playing} = state) do
     {:ok, sink_state} = state.sink_mod.pause(state.sink_state)
-    {:noreply, broadcast(%{state | sink_state: sink_state, status: :paused})}
+    {:noreply, broadcast(%{state | sink_state: sink_state, status: :paused, ticking: false})}
   end
 
   def handle_cast(:toggle, %{status: :paused} = state) do
     {:ok, sink_state} = state.sink_mod.resume(state.sink_state)
-    {:noreply, broadcast(maybe_schedule_tick(%{state | sink_state: sink_state, status: :playing}))}
+    state = %{state | sink_state: sink_state, status: :playing, ticking: false}
+    {:noreply, broadcast(maybe_schedule_tick(state))}
   end
 
   def handle_cast(:toggle, %{status: :stopped, queue: [next | rest]} = state) do
@@ -85,7 +95,8 @@ defmodule SSHAudio.Player do
         status: :playing,
         current: next,
         queue: rest,
-        now_info: nil
+        now_info: nil,
+        ticking: false
     }
 
     {:noreply, broadcast(maybe_schedule_tick(state))}
@@ -95,15 +106,21 @@ defmodule SSHAudio.Player do
 
   def handle_cast(:pause, state) do
     {:ok, sink_state} = state.sink_mod.pause(state.sink_state)
-    {:noreply, broadcast(%{state | sink_state: sink_state, status: :paused})}
+    {:noreply, broadcast(%{state | sink_state: sink_state, status: :paused, ticking: false})}
   end
 
   def handle_cast(:resume, state) do
     {:ok, sink_state} = state.sink_mod.resume(state.sink_state)
-    {:noreply, broadcast(maybe_schedule_tick(%{state | sink_state: sink_state, status: :playing}))}
+    state = %{state | sink_state: sink_state, status: :playing, ticking: false}
+    {:noreply, broadcast(maybe_schedule_tick(state))}
   end
 
   def handle_cast(:skip, state), do: {:noreply, broadcast(advance(state))}
+
+  def handle_cast({:enqueue, track}, %{status: :stopped, current: nil} = state) do
+    state = %{state | queue: state.queue ++ [track]}
+    {:noreply, broadcast(advance(state))}
+  end
 
   def handle_cast({:enqueue, track}, state) do
     {:noreply, broadcast(%{state | queue: state.queue ++ [track]})}
@@ -119,21 +136,20 @@ defmodule SSHAudio.Player do
 
   def handle_cast({:seek, position}, state) do
     {:ok, sink_state} = state.sink_mod.seek(state.sink_state, position)
-    # Reflects the jump immediately rather than waiting on the next tick's
-    # `info/1` poll, since that can be up to a second away.
-    now_info = state.now_info && %{state.now_info | position: position}
-    {:noreply, broadcast(%{state | sink_state: sink_state, now_info: now_info})}
+
+    # Query mpv for the post-seek position. If mpv returns nil/empty fields
+    # mid-seek (due to cache flush during IPC), retain previous valid `now_info`
+    # instead of broadcasting `nil` to prevent UI progress bar flickering.
+    {info, sink_state} = fetch_valid_info(state.sink_mod, sink_state, state.now_info)
+
+    {:noreply, broadcast(%{state | sink_state: sink_state, now_info: info})}
   end
 
   @impl true
   def handle_info(:tick, %{status: :playing} = state) do
     state = %{state | ticking: false}
 
-    {info, sink_state} =
-      case state.sink_mod.info(state.sink_state) do
-        {:ok, info, sink_state} -> {info, sink_state}
-        {:error, sink_state} -> {nil, sink_state}
-      end
+    {info, sink_state} = fetch_valid_info(state.sink_mod, state.sink_state, state.now_info)
 
     state = maybe_schedule_tick(%{state | sink_state: sink_state, now_info: info})
     {:noreply, broadcast(state)}
@@ -144,7 +160,7 @@ defmodule SSHAudio.Player do
   def handle_info(msg, state) do
     case state.sink_mod.handle_message(state.sink_state, msg) do
       {:done, sink_state} -> {:noreply, broadcast(advance(%{state | sink_state: sink_state}))}
-      :ignore -> {:noreply, state}
+      _other -> {:noreply, state}
     end
   end
 
@@ -165,13 +181,22 @@ defmodule SSHAudio.Player do
         current: next,
         queue: rest,
         status: :playing,
-        now_info: nil
+        now_info: nil,
+        ticking: false
     })
   end
 
   defp advance(state) do
     {:ok, sink_state} = state.sink_mod.stop(state.sink_state)
-    %{state | sink_state: sink_state, current: nil, status: :stopped, now_info: nil}
+
+    %{
+      state
+      | sink_state: sink_state,
+        current: nil,
+        status: :stopped,
+        now_info: nil,
+        ticking: false
+    }
   end
 
   defp maybe_schedule_tick(%{status: :playing, ticking: false} = state) do
@@ -179,7 +204,17 @@ defmodule SSHAudio.Player do
     %{state | ticking: true}
   end
 
-  defp maybe_schedule_tick(state), do: state
+
+  # Helper to safely query sink info without overwriting current info when mpv
+  # temporarily returns empty metadata during seeks/buffering.
+  defp fetch_valid_info(sink_mod, sink_state, fallback_info) do
+    case sink_mod.info(sink_state) do
+      {:ok, %{position: nil}, sink_state} -> {fallback_info, sink_state}
+      {:ok, nil, sink_state} -> {fallback_info, sink_state}
+      {:ok, info, sink_state} -> {info, sink_state}
+      {:error, sink_state} -> {fallback_info, sink_state}
+    end
+  end
 
   defp clamp(v), do: v |> max(0) |> min(100)
 

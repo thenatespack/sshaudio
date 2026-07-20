@@ -207,11 +207,14 @@ defmodule SSHAudio.OutputSink.Server do
 
   defp kill(%{port: nil} = state), do: state
 
-  defp kill(%{port: port, os_pid: os_pid, socket_path: socket_path, ipc: ipc}) do
-    if os_pid, do: System.cmd("kill", [to_string(os_pid)], stderr_to_stdout: true)
-    if ipc, do: safe_close_ipc(ipc)
-    safe_close_port(port)
-    if socket_path, do: File.rm(socket_path)
+  defp kill(state) do
+    state = quit_mpv(state)
+
+    safe_close_port(state.port)
+
+    if state.socket_path do
+      File.rm(state.socket_path)
+    end
 
     %__MODULE__{}
   end
@@ -226,5 +229,15 @@ defmodule SSHAudio.OutputSink.Server do
 
   defp ipc_socket_path do
     Path.join(System.tmp_dir!(), "sshaudio-mpv-#{:erlang.unique_integer([:positive])}.sock")
+  end
+
+  defp quit_mpv(%{ipc: nil} = state), do: state
+
+  defp quit_mpv(%{ipc: ipc} = state) do
+    IO.puts("quit mpv")
+    _ = :gen_tcp.send(ipc, ~s({"command":["quit"]}\n))
+    safe_close_ipc(ipc)
+
+    %{state | ipc: nil}
   end
 end
