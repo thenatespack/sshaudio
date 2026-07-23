@@ -11,6 +11,8 @@ defmodule SSHAudio.SSH.Channel do
 
   alias SSHAudio.SessionSupervisor
 
+  @shared_player_id "shared"
+
   defstruct [:channel_id, :conn_ref, :session_pid]
 
   @impl true
@@ -85,8 +87,8 @@ defmodule SSHAudio.SSH.Channel do
     :ok
   end
 
-  defp ensure_session(%{session_pid: nil} = state, width, height) do
-    user_id = ssh_username(state.conn_ref)
+  defp ensure_session(%{session_pid: nil}, width, height) do
+    user_id = shared_player_id()
     {:ok, pid} = SessionSupervisor.start_session(self(), user_id, width, height)
     Process.monitor(pid)
     pid
@@ -94,10 +96,5 @@ defmodule SSHAudio.SSH.Channel do
 
   defp ensure_session(%{session_pid: pid}, _width, _height), do: pid
 
-  defp ssh_username(conn_ref) do
-    case :ssh.connection_info(conn_ref, [:user]) do
-      [{:user, user}] -> to_string(user)
-      _ -> "guest"
-    end
-  end
+  def shared_player_id, do: @shared_player_id
 end

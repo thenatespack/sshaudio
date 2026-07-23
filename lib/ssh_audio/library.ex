@@ -236,7 +236,9 @@ defmodule SSHAudio.Library do
   defp probe_mp3_tags(path) do
     try do
       case Id3vx.parse_file(path) do
-        {:ok, tag} ->
+        result when is_tuple(result) and tuple_size(result) == 2 ->
+          tag = elem(result, 1)
+
           %{
             "title" => read_tag_value(tag, "TIT2"),
             "artist" => read_tag_value(tag, "TPE1"),
@@ -291,8 +293,6 @@ defmodule SSHAudio.Library do
         nil
     end
   end
-
-  defp tag_value(_tag, _frame_id), do: nil
 
   # Tag keys are case-inconsistent across containers (e.g. FLAC/Ogg tend
   # to use uppercase, MP4/MP3 lowercase), so look up case-insensitively.
