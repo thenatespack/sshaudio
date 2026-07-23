@@ -305,7 +305,6 @@ defmodule SSHAudio.Session do
     title = info[:title] || (track && track.display) || "(nothing queued)"
     artist = info[:artist] || (track && track.artist)
     meta_line = Enum.join(Enum.filter([artist, info[:genre]], & &1), " · ")
-    IO.inspect(info)
     format_line = [format_bitrate(info[:bitrate]),format_bitdepth(info[:bitdepth]), format_samplerate(info[:samplerate])]
       |> Enum.filter(& &1)
       |> Enum.join(" · ")
