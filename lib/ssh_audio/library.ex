@@ -170,13 +170,11 @@ defmodule SSHAudio.Library do
 
   defp probe_mp3_tags(path) do
     case Id3vx.parse_file(path) do
-      result when is_tuple(result) and tuple_size(result) == 2 and elem(result, 0) == :ok ->
-        tag = elem(result, 1)
-
+      {:ok, tag} ->
         %{
-          "title" => tag_value(tag, "TIT2"),
-          "artist" => tag_value(tag, "TPE1"),
-          "album" => tag_value(tag, "TALB")
+          "title" => read_tag_value(tag, "TIT2"),
+          "artist" => read_tag_value(tag, "TPE1"),
+          "album" => read_tag_value(tag, "TALB")
         }
 
       _ ->
@@ -192,6 +190,15 @@ defmodule SSHAudio.Library do
       tags
     else
       _ -> %{}
+    end
+  end
+
+  defp read_tag_value(tag, frame_id) do
+    tag
+    |> tag_value(frame_id)
+    |> case do
+      value when is_binary(value) -> value
+      _ -> nil
     end
   end
 
