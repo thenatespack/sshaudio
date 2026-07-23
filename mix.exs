@@ -22,7 +22,8 @@ defmodule SSHAudio.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:phoenix_pubsub, "~> 2.1"}
+      {:phoenix_pubsub, "~> 2.1"},
+      {:id3vx, "~> 0.0.1"}
     ]
   end
 end

@@ -44,10 +44,15 @@ defmodule SSHAudio.Library do
     tracks =
       music_files
       |> Enum.with_index(1)
-      |> Enum.map(fn {path, index} ->
-        maybe_log_scan_progress(index, total, path)
-        build_track(path)
-      end)
+      |> Task.async_stream(
+        fn {path, index} ->
+          maybe_log_scan_progress(index, total, path)
+          build_track(path)
+        end,
+        max_concurrency: max_concurrency(),
+        ordered: false
+      )
+      |> Enum.map(fn {:ok, track} -> track end)
       |> Enum.sort_by(& &1.display)
 
     Logger.info("Library: finished scan of #{length(tracks)} track(s) under #{root}")
@@ -106,6 +111,10 @@ defmodule SSHAudio.Library do
     if index == 1 or index == total or rem(index, 50) == 0 do
       Logger.info("Library scan progress: #{index}/#{total} #{Path.basename(path)}")
     end
+  end
+
+  defp max_concurrency do
+    System.schedulers_online() |> max(2) |> min(8)
   end
 
   defp build_track(path) do
