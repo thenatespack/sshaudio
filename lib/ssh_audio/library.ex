@@ -161,7 +161,9 @@ defmodule SSHAudio.Library do
 
   defp probe_mp3_tags(path) do
     case Id3vx.parse_file(path) do
-      {:ok, tag} ->
+      result when is_tuple(result) and tuple_size(result) == 2 and elem(result, 0) == :ok ->
+        tag = elem(result, 1)
+
         %{
           "title" => tag_value(tag, "TIT2"),
           "artist" => tag_value(tag, "TPE1"),
@@ -184,11 +186,10 @@ defmodule SSHAudio.Library do
     end
   end
 
-  defp tag_value(tag, frame_id) do
-    case tag do
-      %{frames: frames} ->
-        frames
-        |> Enum.find_value(fn
+  defp tag_value(tag, frame_id) when is_map(tag) do
+    case Map.get(tag, :frames) do
+      frames when is_list(frames) ->
+        Enum.find_value(frames, fn
           %{id: ^frame_id, data: %_{text: text}} when is_binary(text) -> text
           %{id: ^frame_id, data: %_{text: text}} when is_list(text) -> List.first(text)
           %{id: ^frame_id, text: [value | _]} -> value
@@ -200,6 +201,8 @@ defmodule SSHAudio.Library do
         nil
     end
   end
+
+  defp tag_value(_tag, _frame_id), do: nil
 
   # Tag keys are case-inconsistent across containers (e.g. FLAC/Ogg tend
   # to use uppercase, MP4/MP3 lowercase), so look up case-insensitively.
