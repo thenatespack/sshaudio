@@ -32,12 +32,26 @@ defmodule SSHAudio.Library do
   @doc "Recursively finds music files under `root` and builds a Track for each."
   @spec scan(Path.t()) :: [Track.t()]
   def scan(root) do
-    root
-    |> Path.join("**/*")
-    |> Path.wildcard()
-    |> Enum.filter(&music_file?/1)
-    |> Enum.map(&build_track/1)
-    |> Enum.sort_by(& &1.display)
+    music_files =
+      root
+      |> Path.join("**/*")
+      |> Path.wildcard()
+      |> Enum.filter(&music_file?/1)
+
+    total = length(music_files)
+    Logger.info("Library: starting scan of #{total} music file(s) under #{root}")
+
+    tracks =
+      music_files
+      |> Enum.with_index(1)
+      |> Enum.map(fn {path, index} ->
+        maybe_log_scan_progress(index, total, path)
+        build_track(path)
+      end)
+      |> Enum.sort_by(& &1.display)
+
+    Logger.info("Library: finished scan of #{length(tracks)} track(s) under #{root}")
+    tracks
   end
 
   @doc "Filters `tracks` by a case-insensitive substring match on their display name."
@@ -59,12 +73,20 @@ defmodule SSHAudio.Library do
 
   @impl true
   def handle_call(:all, _from, state), do: {:reply, state.tracks, state}
-  def handle_call({:search, query}, _from, state), do: {:reply, search(state.tracks, query), state}
+
+  def handle_call({:search, query}, _from, state),
+    do: {:reply, search(state.tracks, query), state}
+
   def handle_call({:set_path, path}, _from, state), do: {:reply, :ok, load(state, path)}
 
-  defp load(state, nil), do: %{state | path: nil, tracks: []}
+  defp load(state, nil) do
+    Logger.info("Library: no path configured; skipping scan")
+    %{state | path: nil, tracks: []}
+  end
 
   defp load(state, path) do
+    Logger.info("Library: scanning path #{inspect(path)}")
+
     if File.dir?(path) do
       tracks = scan(path)
       Logger.info("Library: scanned #{length(tracks)} tracks from #{path}")
@@ -78,6 +100,12 @@ defmodule SSHAudio.Library do
   defp music_file?(path) do
     ext = path |> Path.extname() |> String.downcase()
     File.regular?(path) and ext in @extensions
+  end
+
+  defp maybe_log_scan_progress(index, total, path) do
+    if index == 1 or index == total or rem(index, 50) == 0 do
+      Logger.info("Library scan progress: #{index}/#{total} #{Path.basename(path)}")
+    end
   end
 
   defp build_track(path) do
@@ -111,10 +139,32 @@ defmodule SSHAudio.Library do
     end
   end
 
-  # Reads container-level tags (title/artist/album/...) via `ffprobe`.
-  # Returns `nil` if `ffprobe` isn't on PATH or the file can't be probed,
-  # in which case callers fall back to filename-based guessing.
+  # Reads container-level tags (title/artist/album/...) via a fast direct
+  # parser for MP3 files and falls back to `ffprobe` for everything else.
+  # Returns `%{}` if no compatible metadata is available so callers can fall
+  # back to filename-based guessing.
   defp probe_tags(path) do
+    case Path.extname(path) |> String.downcase() do
+      ".mp3" -> probe_mp3_tags(path)
+      _ -> probe_ffprobe_tags(path)
+    end
+  end
+
+  defp probe_mp3_tags(path) do
+    case Id3vx.parse_file(path) do
+      {:ok, tag} ->
+        %{
+          "title" => tag_value(tag, "TIT2"),
+          "artist" => tag_value(tag, "TPE1"),
+          "album" => tag_value(tag, "TALB")
+        }
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp probe_ffprobe_tags(path) do
     with bin when not is_nil(bin) <- System.find_executable("ffprobe"),
          args = ["-v", "quiet", "-print_format", "json", "-show_entries", "format_tags", path],
          {json, 0} <- System.cmd(bin, args, stderr_to_stdout: false),
@@ -122,6 +172,23 @@ defmodule SSHAudio.Library do
       tags
     else
       _ -> %{}
+    end
+  end
+
+  defp tag_value(tag, frame_id) do
+    case tag do
+      %{frames: frames} ->
+        frames
+        |> Enum.find_value(fn
+          %{id: ^frame_id, data: %_{text: text}} when is_binary(text) -> text
+          %{id: ^frame_id, data: %_{text: text}} when is_list(text) -> List.first(text)
+          %{id: ^frame_id, text: [value | _]} -> value
+          %{id: ^frame_id, value: value} -> value
+          _ -> nil
+        end)
+
+      _ ->
+        nil
     end
   end
 

@@ -1,3 +1,4 @@
 %{
+  "id3vx": {:hex, :id3vx, "0.0.1", "3fb5de2cb7221098f6aca2e990db7f9d1a355c7abbe9f52896351fc2fea70196", [:mix], [], "hexpm", "23b34cd8788606e180d29592bed3103fd5933d257fadc5a6eeef47a20d505398"},
   "phoenix_pubsub": {:hex, :phoenix_pubsub, "2.2.0", "ff3a5616e1bed6804de7773b92cbccfc0b0f473faf1f63d7daf1206c7aeaaa6f", [:mix], [], "hexpm", "adc313a5bf7136039f63cfd9668fde73bba0765e0614cba80c06ac9460ff3e96"},
 }
