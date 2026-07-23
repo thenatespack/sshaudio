@@ -29,6 +29,9 @@ defmodule SSHAudio.Library do
   @spec set_path(Path.t()) :: :ok
   def set_path(path), do: GenServer.call(__MODULE__, {:set_path, path})
 
+  @spec scan_and_update(Path.t()) :: :ok
+  def scan_and_update(root), do: GenServer.cast(__MODULE__, {:scan_and_update, root})
+
   @doc "Recursively finds music files under `root` and builds a Track for each."
   @spec scan(Path.t()) :: [Track.t()]
   def scan(root) do
@@ -93,6 +96,11 @@ defmodule SSHAudio.Library do
 
   def handle_call({:set_path, path}, _from, state), do: {:reply, :ok, load(state, path)}
 
+  def handle_cast({:scan_and_update, root}, state) do
+    Task.start(fn -> scan_and_update_in_background(self(), root) end)
+    {:noreply, %{state | path: root}}
+  end
+
   defp load(state, nil) do
     Logger.info("Library: no path configured; skipping scan")
     %{state | path: nil, tracks: []}
@@ -111,6 +119,31 @@ defmodule SSHAudio.Library do
     end
   end
 
+  defp scan_and_update_in_background(server, root) do
+    if File.dir?(root) do
+      music_files =
+        root
+        |> Path.join("**/*")
+        |> Path.wildcard()
+        |> Enum.filter(&music_file?/1)
+
+      total = length(music_files)
+      Logger.info("Library: starting incremental scan of #{total} music file(s) under #{root}")
+
+      music_files
+      |> Enum.with_index(1)
+      |> Enum.each(fn {path, index} ->
+        maybe_log_scan_progress(index, total, path)
+        track = build_track(path)
+        send(server, {:library_track_added, track})
+      end)
+
+      Logger.info("Library: finished incremental scan of #{root}")
+    else
+      Logger.warning("Library: path #{inspect(root)} is not a directory; skipping scan")
+    end
+  end
+
   defp music_file?(path) do
     ext = path |> Path.extname() |> String.downcase()
     File.regular?(path) and ext in @extensions
@@ -122,8 +155,25 @@ defmodule SSHAudio.Library do
     end
   end
 
+  defp merge_tracks(tracks, new_track) do
+    case Enum.find_index(tracks, &(&1.path == new_track.path)) do
+      nil -> [new_track | tracks]
+      index -> List.replace_at(tracks, index, new_track)
+    end
+  end
+
+  defp sort_tracks(tracks) do
+    Enum.sort_by(tracks, & &1.display)
+  end
+
   defp max_concurrency do
     System.schedulers_online() |> max(2) |> min(8)
+  end
+
+  @impl true
+  def handle_info({:library_track_added, track}, state) do
+    merged_tracks = sort_tracks(merge_tracks(state.tracks, track))
+    {:noreply, %{state | tracks: merged_tracks}}
   end
 
   defp build_track(path) do

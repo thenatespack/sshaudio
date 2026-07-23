@@ -20,6 +20,12 @@ defmodule SSHAudio.Application do
     ]
 
     opts = [strategy: :one_for_one, name: SSHAudio.Supervisor]
-    Supervisor.start_link(children, opts)
+    {:ok, _supervisor} = Supervisor.start_link(children, opts)
+
+    if library_path do
+      Task.start(fn -> SSHAudio.Library.scan_and_update(library_path) end)
+    end
+
+    {:ok, self()}
   end
 end
