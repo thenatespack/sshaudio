@@ -38,11 +38,26 @@ defmodule SSHAudio.LibraryTest do
     file_path = Path.join(temp_dir, "song.mp3")
     File.write!(file_path, <<0, 1, 2, 3, 4, 5>>)
 
-    name = String.to_atom("test_library_#{System.unique_integer([:positive])}")
-    assert {:ok, _pid} = start_supervised({SSHAudio.Library, path: temp_dir, name: name})
-    assert [] == GenServer.call(name, :all)
+    assert [] == Library.all()
 
-    assert :ok = GenServer.cast(name, {:scan_and_update, temp_dir})
-    assert [%{path: ^file_path}] = GenServer.call(name, :all)
+    assert :ok = Library.scan_and_update(temp_dir)
+
+    assert eventually(fn ->
+             case Library.all() do
+               [%{path: ^file_path}] -> true
+               _ -> false
+             end
+           end)
+  end
+
+  defp eventually(fun) do
+    Enum.reduce_while(1..100, false, fn _, _ ->
+      if fun.() do
+        {:halt, true}
+      else
+        Process.sleep(10)
+        {:cont, false}
+      end
+    end)
   end
 end

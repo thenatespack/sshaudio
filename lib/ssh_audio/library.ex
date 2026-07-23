@@ -76,7 +76,6 @@ defmodule SSHAudio.Library do
   def search(tracks, ""), do: tracks
 
   def search(tracks, query) do
-    IO.inspect(tracks)
     needle = String.downcase(query)
     Enum.filter(tracks, &String.contains?(String.downcase(&1.display), needle))
   end
@@ -85,7 +84,9 @@ defmodule SSHAudio.Library do
 
   @impl true
   def init(opts) do
-    {:ok, load(%__MODULE__{}, Keyword.get(opts, :path))}
+    state = load(%__MODULE__{}, Keyword.get(opts, :path))
+    send(self(), {:start_background_scan, state.path})
+    {:ok, state}
   end
 
   @impl true
@@ -96,9 +97,15 @@ defmodule SSHAudio.Library do
 
   def handle_call({:set_path, path}, _from, state), do: {:reply, :ok, load(state, path)}
 
+  @impl true
   def handle_cast({:scan_and_update, root}, state) do
-    Task.start(fn -> scan_and_update_in_background(self(), root) end)
+    send(self(), {:start_background_scan, root})
     {:noreply, %{state | path: root}}
+  end
+
+  def handle_cast({:library_track_added, track}, state) do
+    merged_tracks = sort_tracks(merge_tracks(state.tracks, track))
+    {:noreply, %{state | tracks: merged_tracks}}
   end
 
   defp load(state, nil) do
@@ -110,9 +117,7 @@ defmodule SSHAudio.Library do
     Logger.info("Library: scanning path #{inspect(path)}")
 
     if File.dir?(path) do
-      tracks = scan(path)
-      Logger.info("Library: scanned #{length(tracks)} tracks from #{path}")
-      %{state | path: path, tracks: tracks}
+      %{state | path: path, tracks: []}
     else
       Logger.warning("Library: path #{inspect(path)} is not a directory; skipping scan")
       %{state | path: nil, tracks: []}
@@ -135,7 +140,7 @@ defmodule SSHAudio.Library do
       |> Enum.each(fn {path, index} ->
         maybe_log_scan_progress(index, total, path)
         track = build_track(path)
-        send(server, {:library_track_added, track})
+        GenServer.cast(server, {:library_track_added, track})
       end)
 
       Logger.info("Library: finished incremental scan of #{root}")
@@ -168,6 +173,16 @@ defmodule SSHAudio.Library do
 
   defp max_concurrency do
     System.schedulers_online() |> max(2) |> min(8)
+  end
+
+  @impl true
+  def handle_info({:start_background_scan, path}, state) do
+    if path do
+      server = self()
+      Task.start(fn -> scan_and_update_in_background(server, path) end)
+    end
+
+    {:noreply, %{state | path: path}}
   end
 
   @impl true
@@ -219,15 +234,24 @@ defmodule SSHAudio.Library do
   end
 
   defp probe_mp3_tags(path) do
-    case Id3vx.parse_file(path) do
-      {:ok, tag} ->
-        %{
-          "title" => read_tag_value(tag, "TIT2"),
-          "artist" => read_tag_value(tag, "TPE1"),
-          "album" => read_tag_value(tag, "TALB")
-        }
+    try do
+      case Id3vx.parse_file(path) do
+        {:ok, tag} ->
+          %{
+            "title" => read_tag_value(tag, "TIT2"),
+            "artist" => read_tag_value(tag, "TPE1"),
+            "album" => read_tag_value(tag, "TALB")
+          }
 
-      _ ->
+        _ ->
+          %{}
+      end
+    rescue
+      error ->
+        Logger.warning(
+          "Library: failed to parse MP3 tags for #{inspect(path)}: #{Exception.message(error)}"
+        )
+
         %{}
     end
   end
